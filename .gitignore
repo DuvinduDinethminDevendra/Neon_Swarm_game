@@ -48,5 +48,22 @@
 .tmp_versions/
 modules.order
 Module.symvers
+
+# Build artifacts
+build/
+obj/
+*.log
+*.tmp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
 Mkfile.old
 dkms.conf
