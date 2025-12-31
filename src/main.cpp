@@ -16,8 +16,16 @@ int main(void) {
     const float reloadDuration = 120.0f;  // Reload duration in frames (2 seconds at 60 FPS)
     InitWindow(screenWidth, screenHeight, "Neon Swarm");
     SetTargetFPS(60);
-    SetExitKey(KEY_NULL);  // Disable ESC closing the window
+    SetExitKey(KEY_NULL);
+    
+    // Initialize audio BEFORE loading sounds
+    InitAudioDevice();
+    
+    // Now initialize textures and sounds
     InitializeTextures();
+    InitSounds();
+
+    TraceLog(LOG_INFO, "Audio initialized. Master volume: %.2f", GetMasterVolume());
 
     // Game State
     GameState gameState = MENU;
@@ -28,12 +36,15 @@ int main(void) {
     Player player = InitPlayer(screenWidth, screenHeight);
     Bullet bullets[100] = {0};
     InitBulletPool(bullets, 100);
+    Particle particles[200] = {0};
+    InitParticlePool(particles, 200);
     int bulletCount = 100;
     int bulletCapacity = 100;
     int reloadTimer = 0;
     int pauseMenuSelection = 0;
     float idleFrameCounter = 0.0f;  // Counter for idle animation
     const float idleFrameRate = 0.15f;  // Time between frames (0.15s per frame for smoother animation)
+    CameraShake cameraShake = {0, 0};
 
     // Initialize enemy pool
     EnemyPool enemyPool = InitEnemyPool();
@@ -68,6 +79,8 @@ int main(void) {
         else if (gameState == PLAYING) {
             UpdatePlayer(&player, screenWidth, screenHeight);
             UpdateBullets(bullets, bulletCount);
+            UpdateParticles(particles, 200);
+            UpdateScreenShake(&cameraShake);
             UpdateEnemies(&enemyPool, player.position, screenWidth, screenHeight);
 
             // Decrement reload timer
@@ -91,6 +104,7 @@ int main(void) {
                     Vector2 barrelPos = GetBarrelPosition(&player);
                     ShootBullet(bullets, bulletCount, barrelPos, mousePos, 7.0f, YELLOW);
                     bulletCapacity--;
+                    TriggerScreenShake(&cameraShake, 1.5f);  // Muzzle shake
                 }
             }
 
@@ -99,6 +113,12 @@ int main(void) {
                 bulletCapacity = 100;
                 reloadTimer = reloadDuration;
                 InitBulletPool(bullets, 100);
+                
+                // --- PLAY RELOAD SOUND ---
+                if (gunReloadSound.frameCount > 0 && IsSoundValid(gunReloadSound)) {
+                    PlaySound(gunReloadSound);
+                    TraceLog(LOG_DEBUG, "Reload sound played!");
+                }
             }
 
             // Spawn 3 random slimes with backtick key (for testing)
@@ -124,6 +144,11 @@ int main(void) {
                         // Collision detected!
                         Vector2 knockbackDir = Vector2Subtract(enemyPool.enemies[e].position, bullets[b].position);
                         TakeDamage(&enemyPool.enemies[e], bullets[b].damage, knockbackDir);
+                        
+                        // --- IMPACT EFFECTS ---
+                        SpawnImpactParticles(particles, 200, bullets[b].position, bullets[b].velocity);
+                        TriggerScreenShake(&cameraShake, 0.8f);
+                        
                         bullets[b].active = false;
                     }
                 }
@@ -182,6 +207,16 @@ int main(void) {
         // --- DRAW ---
         BeginDrawing();
         ClearBackground(BLACK);
+        
+        Vector2 shakeOffset = (gameState == PLAYING) ? GetScreenShakeOffset(&cameraShake) : (Vector2){0, 0};
+        if (shakeOffset.x != 0 || shakeOffset.y != 0) {
+            BeginMode2D((Camera2D){
+                .offset = {400, 300},
+                .target = {400 + shakeOffset.x, 300 + shakeOffset.y},
+                .rotation = 0,
+                .zoom = 1.0f
+            });
+        }
 
         if (gameState == MENU) {
             DrawMenu(&menu, screenWidth, screenHeight);
@@ -257,11 +292,26 @@ int main(void) {
             if (reloadTimer < 0) reloadTimer = 0;
             
             DrawBullets(bullets, bulletCount);
+            DrawParticles(particles, 200);
             DrawEnemies(&enemyPool);
+            
+            // --- DRAW MUZZLE FLASH ---
+            for (int b = 0; b < bulletCount; b++) {
+                if (bullets[b].muzzleFlashTime > 0.0f && bullets[b].muzzleFlashTime > 0.04f) {
+                    Vector2 muzzlePos = bullets[b].trailPositions[0];
+                    DrawCircleV(muzzlePos, 8.0f, Fade(ORANGE, 0.7f));
+                    DrawCircleV(muzzlePos, 5.0f, Fade(YELLOW, 0.9f));
+                }
+            }
             
             // Draw safe zone (minimum shoot distance)
             DrawCircleLines(player.position.x, player.position.y, MIN_SHOOT_DISTANCE, Fade(RED, 0.3f));
-            
+        }
+
+        if (shakeOffset.x != 0 || shakeOffset.y != 0) EndMode2D();
+
+        // --- DRAW HUD (HEALTH BAR) - OUTSIDE CAMERA SHAKE ---
+        if (gameState == PLAYING) {
             // Draw bullet counter
             int activeBullets = 0;
             for (int i = 0; i < bulletCount; i++) {
@@ -280,39 +330,27 @@ int main(void) {
             for (int i = 0; i < enemyPool.count; i++) {
                 if (enemyPool.enemies[i].active) activeEnemies++;
             }
-            DrawText(TextFormat("Enemies: %d", activeEnemies), 10, screenHeight - 90, 20, RED);
+            DrawText(TextFormat("Enemies: %d", activeEnemies), screenWidth - 120, 10, 20, LIME);
             
             // --- PLAYER HEALTH BAR (BOTTOM CENTER) ---
-            float healthBarWidth = 300.0f;
-            float healthBarHeight = 20.0f;
-            float healthBarX = screenWidth / 2.0f - healthBarWidth / 2.0f;
-            float healthBarY = screenHeight - 50.0f;
+            float barWidth = 300.0f;
+            float barHeight = 20.0f;
+            float barX = screenWidth / 2.0f - barWidth / 2.0f;
+            float barY = screenHeight - 50.0f;
             
-            // Background (Black)
-            DrawRectangle(healthBarX - 3, healthBarY - 3, healthBarWidth + 6, healthBarHeight + 6, BLACK);
-            
-            // Health percentage
+            DrawRectangle(barX - 3, barY - 3, barWidth + 6, barHeight + 6, BLACK);
             float healthPercent = player.health / player.maxHealth;
-            Color healthBarColor = (healthPercent > 0.5f) ? GREEN : (healthPercent > 0.25f) ? YELLOW : RED;
-            
-            // Health fill
-            DrawRectangle(healthBarX, healthBarY, healthBarWidth * healthPercent, healthBarHeight, healthBarColor);
-            
-            // Health text (centered on bar)
-            DrawText(TextFormat("HP: %.0f / %.0f", player.health, player.maxHealth), 
-                    healthBarX + 50, healthBarY + 2, 16, WHITE);
-        }
-        else if (gameState == PAUSED) {
-            // Draw game in background
-            DrawPlayer(&player);
-            DrawPauseMenu(screenWidth, screenHeight, pauseMenuSelection);
-            DrawBullets(bullets, bulletCount);
+            Color healthColor = (healthPercent > 0.5f) ? GREEN : (healthPercent > 0.25f) ? YELLOW : RED;
+            DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, healthColor);
+            DrawText(TextFormat("HP: %.0f / %.0f", player.health, player.maxHealth), barX + 50, barY + 2, 16, WHITE);
         }
 
         EndDrawing();
     }
 
     // 3. De-Initialization
+    CloseAudioDevice();
     CloseWindow();
+
     return 0;
 }
