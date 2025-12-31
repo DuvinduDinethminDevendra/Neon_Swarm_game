@@ -38,7 +38,7 @@ if not exist "build\libraylib.a" (
 
 REM Compile the game
 echo Compiling game...
-g++ -std=c++17 -O2 -I raylib-5.5/src src/main.cpp src/menu.cpp src/settings.cpp src/game.cpp -L build -o build/NeonSwarmGame.exe -l raylib -l opengl32 -l winmm -l gdi32 -l user32 -l shell32
+g++ -std=c++17 -O2 -I raylib-5.5/src src/main.cpp src/menu.cpp src/settings.cpp src/game.cpp src/bullets.cpp -L build -o build/NeonSwarmGame.exe -l raylib -l opengl32 -l winmm -l gdi32 -l user32 -l shell32
 
 if exist "build\NeonSwarmGame.exe" (
     echo.

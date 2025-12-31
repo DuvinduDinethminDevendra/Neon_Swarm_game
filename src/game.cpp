@@ -1,5 +1,18 @@
 #include "game.h"
+#include "raymath.h"
 #include <math.h>
+#include <cstdio>
+
+Texture2D PlayerTexture;
+
+void InitializeTextures(void) {
+    PlayerTexture = LoadTexture("assets/txtures/Top_Down_Survivor/rifle/shoot/survivor-shoot_rifle_0.png");
+    if (PlayerTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Player texture not found. Using fallback.");
+    } else {
+        TraceLog(LOG_INFO, "Player texture loaded successfully!");
+    }
+}
 
 Player InitPlayer(int screenWidth, int screenHeight) {
     Player player = {0};
@@ -8,15 +21,67 @@ Player InitPlayer(int screenWidth, int screenHeight) {
     player.speed = 4.0f;
     player.radius = 15.0f;
     player.rotation = 0.0f;
+    player.texture = PlayerTexture;
+    player.scale = 0.3f;
+    player.isMoving = false;
+    player.state = PLAYER_IDLE;
+    
+    float baseBarrelX = 120.0f;
+    float baseBarrelY = 46.0f;
+    player.barrelOffset = {baseBarrelX, baseBarrelY};
+    
+    // Load idle animation frames
+    for (int i = 0; i < IDLE_FRAMES; i++) {
+        char filepath[256];
+        snprintf(filepath, sizeof(filepath), "assets/txtures/Top_Down_Survivor/rifle/idle/survivor-idle_rifle_%d.png", i);
+        player.idleTextures[i] = LoadTexture(filepath);
+        if (player.idleTextures[i].id == 0) {
+            TraceLog(LOG_WARNING, "Failed to load idle texture: %s", filepath);
+        }
+    }
+    
+    // Load walk animation frames
+    for (int i = 0; i < WALK_FRAMES; i++) {
+        char filepath[256];
+        snprintf(filepath, sizeof(filepath), "assets/txtures/Top_Down_Survivor/rifle/move/survivor-move_rifle_%d.png", i);
+        player.walkTextures[i] = LoadTexture(filepath);
+        if (player.walkTextures[i].id == 0) {
+            TraceLog(LOG_WARNING, "Failed to load walk texture: %s", filepath);
+        }
+    }
+    
+    // Load shoot animation frames
+    for (int i = 0; i < SHOOT_FRAMES; i++) {
+        char filepath[256];
+        snprintf(filepath, sizeof(filepath), "assets/txtures/Top_Down_Survivor/rifle/shoot/survivor-shoot_rifle_%d.png", i);
+        player.shootTextures[i] = LoadTexture(filepath);
+        if (player.shootTextures[i].id == 0) {
+            TraceLog(LOG_WARNING, "Failed to load shoot texture: %s", filepath);
+        }
+    }
+    
+    // Load reload animation frames
+    for (int i = 0; i < RELOAD_FRAMES; i++) {
+        char filepath[256];
+        snprintf(filepath, sizeof(filepath), "assets/txtures/Top_Down_Survivor/rifle/reload/survivor-reload_rifle_%d.png", i);
+        player.reloadTextures[i] = LoadTexture(filepath);
+        if (player.reloadTextures[i].id == 0) {
+            TraceLog(LOG_WARNING, "Failed to load reload texture: %s", filepath);
+        }
+    }
+    
     return player;
 }
 
 void UpdatePlayer(Player* player, int screenWidth, int screenHeight) {
+    // Track if player is moving
+    player->isMoving = false;
+    
     // WASD Movement
-    if (IsKeyDown(KEY_W)) player->position.y -= player->speed;
-    if (IsKeyDown(KEY_S)) player->position.y += player->speed;
-    if (IsKeyDown(KEY_A)) player->position.x -= player->speed;
-    if (IsKeyDown(KEY_D)) player->position.x += player->speed;
+    if (IsKeyDown(KEY_W)) { player->position.y -= player->speed; player->isMoving = true; }
+    if (IsKeyDown(KEY_S)) { player->position.y += player->speed; player->isMoving = true; }
+    if (IsKeyDown(KEY_A)) { player->position.x -= player->speed; player->isMoving = true; }
+    if (IsKeyDown(KEY_D)) { player->position.x += player->speed; player->isMoving = true; }
 
     // Keep player in bounds
     if (player->position.x < player->radius) player->position.x = player->radius;
@@ -30,15 +95,24 @@ void UpdatePlayer(Player* player, int screenWidth, int screenHeight) {
 }
 
 void DrawPlayer(Player* player) {
-    // Draw Player (as a triangle to show direction)
-    DrawPoly(player->position, 3, player->radius, player->rotation, LIME);
+    // Check if texture is valid
+    if (player->texture.id == 0) {
+        // Fallback: Draw as triangle if texture failed to load
+        DrawPoly(player->position, 3, player->radius, player->rotation, LIME);
+    } else {
+        // Draw Player texture rotated and scaled
+        Rectangle source = {0, 0, (float)player->texture.width, (float)player->texture.height};
+        Rectangle dest = {player->position.x, player->position.y, (float)player->texture.width * player->scale, (float)player->texture.height * player->scale};
+        Vector2 origin = {(float)player->texture.width * player->scale / 2, (float)player->texture.height * player->scale / 2};
+        DrawTexturePro(player->texture, source, dest, origin, player->rotation, WHITE);
+    }
     
     // Draw reticle at mouse position
     Vector2 mousePos = GetMousePosition();
     DrawCircleLines(mousePos.x, mousePos.y, 10, Fade(LIME, 0.5f));
     
     // HUD
-    DrawText("WASD to Move | Mouse to Aim | ESC for Menu", 10, 10, 14, DARKGRAY);
+    DrawText("WASD to Move | Mouse to Aim | ESC for Menu | R to Reload", 10, 10, 14, DARKGRAY);
 }
 
 bool ShouldReturnToMenu(void) {
@@ -106,4 +180,20 @@ bool IsPauseMenuItemClicked(PauseMenuRects rects, int itemIndex) {
     else targetRect = rects.menuRect;
     
     return (CheckCollisionPointRec(mousePos, targetRect) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON));
+}
+
+Vector2 GetBarrelPosition(Player* player) {
+    // Scale the barrel offset and then rotate it
+    Vector2 scaledOffset = {
+        player->barrelOffset.x * player->scale,
+        player->barrelOffset.y * player->scale
+    };
+    
+    // Rotate the scaled barrel offset by player rotation
+    float rad = player->rotation * DEG2RAD;
+    Vector2 rotatedOffset = {
+        scaledOffset.x * cosf(rad) - scaledOffset.y * sinf(rad),
+        scaledOffset.x * sinf(rad) + scaledOffset.y * cosf(rad)
+    };
+    return Vector2Add(player->position, rotatedOffset);
 }
