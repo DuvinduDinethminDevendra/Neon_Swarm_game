@@ -30,6 +30,8 @@ typedef struct {
     float scale;  // Texture scale factor
     bool isMoving;  // Track if player is currently moving
     PlayerState state;
+    float health;       // Player health points
+    float maxHealth;    // Maximum health
 } Player;
 
 typedef enum { GAME_PLAYING, GAME_PAUSED } GamePlayState;
@@ -51,5 +53,8 @@ int HandlePauseMenuClick(PauseMenuRects rects, int currentSelection);
 bool IsPauseMenuItemClicked(PauseMenuRects rects, int itemIndex);
 bool ShouldReturnToMenu(void);
 bool ShouldOpenPause(void);
+
+extern Shader slimeShader;
+extern int squashLoc;
 
 #endif

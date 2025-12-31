@@ -12,6 +12,7 @@ void ShootBullet(Bullet bullets[], int maxBullets, Vector2 position, Vector2 dir
             bullets[i].position = position;
             bullets[i].radius = 3.0f;
             bullets[i].color = color;
+            bullets[i].damage = 10.0f;  // Default damage
             
             // Calculate direction towards target (direction is the target position)
             Vector2 dirToTarget = Vector2Subtract(direction, position);
@@ -41,5 +42,11 @@ void DrawBullets(Bullet bullets[], int maxBullets) {
         if (bullets[i].active) {
             DrawCircleV(bullets[i].position, bullets[i].radius, bullets[i].color);
         }
+    }
+}
+
+void SetBulletDamage(Bullet bullets[], int maxBullets, float damage) {
+    for (int i = 0; i < maxBullets; i++) {
+        bullets[i].damage = damage;
     }
 }

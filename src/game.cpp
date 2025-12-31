@@ -4,6 +4,8 @@
 #include <cstdio>
 
 Texture2D PlayerTexture;
+Shader slimeShader = {0};
+int squashLoc = 0;
 
 void InitializeTextures(void) {
     PlayerTexture = LoadTexture("assets/txtures/Top_Down_Survivor/rifle/shoot/survivor-shoot_rifle_0.png");
@@ -11,6 +13,15 @@ void InitializeTextures(void) {
         TraceLog(LOG_WARNING, "Player texture not found. Using fallback.");
     } else {
         TraceLog(LOG_INFO, "Player texture loaded successfully!");
+    }
+    
+    // Load slime shader
+    slimeShader = LoadShader(0, "assets/shaders/slime.fs");
+    if (slimeShader.id != 0) {
+        squashLoc = GetShaderLocation(slimeShader, "squashFactor");
+        TraceLog(LOG_INFO, "Slime shader loaded successfully!");
+    } else {
+        TraceLog(LOG_WARNING, "Failed to load slime shader");
     }
 }
 
@@ -25,6 +36,8 @@ Player InitPlayer(int screenWidth, int screenHeight) {
     player.scale = 0.3f;
     player.isMoving = false;
     player.state = PLAYER_IDLE;
+    player.health = 100.0f;     // Starting health
+    player.maxHealth = 100.0f;  // Max health
     
     float baseBarrelX = 120.0f;
     float baseBarrelY = 46.0f;
@@ -113,6 +126,40 @@ void DrawPlayer(Player* player) {
     
     // HUD
     DrawText("WASD to Move | Mouse to Aim | ESC for Menu | R to Reload", 10, 10, 14, DARKGRAY);
+    
+    // --- PLAYER HEALTH BAR (TOP LEFT) ---
+    float barWidth = 150.0f;
+    float barHeight = 15.0f;
+    float barX = 10.0f;
+    float barY = 40.0f;
+    
+    // Background (Black outline)
+    DrawRectangle(barX - 2, barY - 2, barWidth + 4, barHeight + 4, BLACK);
+    // Health (Red to Green gradient effect)
+    float healthPercent = player->health / player->maxHealth;
+    Color healthColor = (healthPercent > 0.5f) ? GREEN : (healthPercent > 0.25f) ? YELLOW : RED;
+    DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, healthColor);
+    
+    // Health text
+    DrawText(TextFormat("HP: %.0f/%.0f", player->health, player->maxHealth), 
+            barX, barY + 20, 14, WHITE);
+    
+    // --- PLAYER HEALTH BAR (BOTTOM MIDDLE) ---
+    barWidth = 200.0f;
+    barHeight = 20.0f;
+    barX = (GetScreenWidth() - barWidth) / 2.0f;
+    barY = GetScreenHeight() - 60.0f;
+    
+    // Background (Black outline)
+    DrawRectangle(barX - 2, barY - 2, barWidth + 4, barHeight + 4, BLACK);
+    // Health (Red to Green gradient effect)
+    healthPercent = player->health / player->maxHealth;
+    healthColor = (healthPercent > 0.5f) ? GREEN : (healthPercent > 0.25f) ? YELLOW : RED;
+    DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, healthColor);
+    
+    // Health text
+    DrawText(TextFormat("HP: %.0f/%.0f", player->health, player->maxHealth), 
+            barX, barY + 25, 14, WHITE);
 }
 
 bool ShouldReturnToMenu(void) {

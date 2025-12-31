@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "game.h"
 #include "bullets.h"
+#include "enemy.h"
 
 // Game States
 typedef enum { MENU, PLAYING, PAUSED, SETTINGS, QUIT } GameState;
@@ -32,7 +33,13 @@ int main(void) {
     int reloadTimer = 0;
     int pauseMenuSelection = 0;
     float idleFrameCounter = 0.0f;  // Counter for idle animation
-    const float idleFrameRate = 0.15f;  // Time between frames (0.15s per frame)
+    const float idleFrameRate = 0.15f;  // Time between frames (0.15s per frame for smoother animation)
+
+    // Initialize enemy pool
+    EnemyPool enemyPool = InitEnemyPool();
+    SpawnSlime(&enemyPool, (Vector2){200, 150});
+    SpawnSlime(&enemyPool, (Vector2){600, 150});
+    SpawnSlime(&enemyPool, (Vector2){400, 450});
 
     // 2. Main Game Loop
     while (!WindowShouldClose() && gameState != QUIT) {
@@ -61,6 +68,7 @@ int main(void) {
         else if (gameState == PLAYING) {
             UpdatePlayer(&player, screenWidth, screenHeight);
             UpdateBullets(bullets, bulletCount);
+            UpdateEnemies(&enemyPool, player.position, screenWidth, screenHeight);
 
             // Decrement reload timer
             if (reloadTimer > 0) reloadTimer--;
@@ -81,9 +89,8 @@ int main(void) {
                 
                 if (distToMouse > MIN_SHOOT_DISTANCE && bulletCapacity > 0) {
                     Vector2 barrelPos = GetBarrelPosition(&player);
-                    ShootBullet(bullets, bulletCount, barrelPos, mousePos, 7.0f, LIME);
+                    ShootBullet(bullets, bulletCount, barrelPos, mousePos, 7.0f, YELLOW);
                     bulletCapacity--;
-                    player.state = PLAYER_SHOOTING;
                 }
             }
 
@@ -92,6 +99,65 @@ int main(void) {
                 bulletCapacity = 100;
                 reloadTimer = reloadDuration;
                 InitBulletPool(bullets, 100);
+            }
+
+            // Spawn 3 random slimes with backtick key (for testing)
+            if (IsKeyPressed(KEY_GRAVE)) {
+                for (int i = 0; i < 3; i++) {
+                    float randomX = 50.0f + (float)(rand() % (screenWidth - 100));
+                    float randomY = 50.0f + (float)(rand() % (screenHeight - 100));
+                    SpawnSlime(&enemyPool, (Vector2){randomX, randomY});
+                }
+                TraceLog(LOG_INFO, "Spawned 3 test slimes!");
+            }
+
+            // Check bullet-enemy collisions
+            for (int b = 0; b < bulletCount; b++) {
+                if (!bullets[b].active) continue;
+                
+                for (int e = 0; e < enemyPool.count; e++) {
+                    if (!enemyPool.enemies[e].active) continue;
+                    
+                    // Check collision between bullet and enemy
+                    float distance = Vector2Distance(bullets[b].position, enemyPool.enemies[e].position);
+                    if (distance < bullets[b].radius + enemyPool.enemies[e].radius) {
+                        // Collision detected!
+                        Vector2 knockbackDir = Vector2Subtract(enemyPool.enemies[e].position, bullets[b].position);
+                        TakeDamage(&enemyPool.enemies[e], bullets[b].damage, knockbackDir);
+                        bullets[b].active = false;
+                    }
+                }
+            }
+            
+            // --- CHECK ENEMY-PLAYER COLLISION ---
+            for (int e = 0; e < enemyPool.count; e++) {
+                if (!enemyPool.enemies[e].active) continue;
+                
+                float distance = Vector2Distance(player.position, enemyPool.enemies[e].position);
+                if (distance < player.radius + enemyPool.enemies[e].radius) {
+                    // Check damage cooldown to prevent multiple hits per frame
+                    if (enemyPool.enemies[e].lastDamageTime <= 0.0f) {
+                        // Get random damage from enemy's range
+                        float damageDealt = GetRandomDamage(&enemyPool.enemies[e]);
+                        player.health -= damageDealt;
+                        
+                        // Set cooldown (0.5 seconds between hits)
+                        enemyPool.enemies[e].lastDamageTime = 0.5f;
+                        
+                        TraceLog(LOG_INFO, "Player took %.0f damage!", damageDealt);
+                    }
+                    
+                    // Knockback player away from enemy
+                    Vector2 pushDir = Vector2Subtract(player.position, enemyPool.enemies[e].position);
+                    pushDir = Vector2Normalize(pushDir);
+                    player.position = Vector2Add(player.position, Vector2Scale(pushDir, 2.0f));
+                }
+            }
+            
+            // --- GAME OVER CONDITION ---
+            if (player.health <= 0) {
+                gameState = MENU;
+                TraceLog(LOG_INFO, "Player defeated! Returning to menu.");
             }
 
             if (ShouldOpenPause()) gameState = PAUSED;
@@ -191,14 +257,50 @@ int main(void) {
             if (reloadTimer < 0) reloadTimer = 0;
             
             DrawBullets(bullets, bulletCount);
+            DrawEnemies(&enemyPool);
+            
+            // Draw safe zone (minimum shoot distance)
             DrawCircleLines(player.position.x, player.position.y, MIN_SHOOT_DISTANCE, Fade(RED, 0.3f));
             
-            // Draw bullet counter and reload status
+            // Draw bullet counter
+            int activeBullets = 0;
+            for (int i = 0; i < bulletCount; i++) {
+                if (bullets[i].active) activeBullets++;
+            }
             DrawText(TextFormat("Bullets: %d/100", bulletCapacity), 10, screenHeight - 30, 20, LIME);
+            
+            // Draw reload status
             if (reloadTimer > 0) {
                 float reloadPercent = (reloadTimer / reloadDuration) * 100.0f;
                 DrawText(TextFormat("Reloading: %.0f%%", reloadPercent), 10, screenHeight - 60, 20, RED);
             }
+            
+            // Draw enemy count
+            int activeEnemies = 0;
+            for (int i = 0; i < enemyPool.count; i++) {
+                if (enemyPool.enemies[i].active) activeEnemies++;
+            }
+            DrawText(TextFormat("Enemies: %d", activeEnemies), 10, screenHeight - 90, 20, RED);
+            
+            // --- PLAYER HEALTH BAR (BOTTOM CENTER) ---
+            float healthBarWidth = 300.0f;
+            float healthBarHeight = 20.0f;
+            float healthBarX = screenWidth / 2.0f - healthBarWidth / 2.0f;
+            float healthBarY = screenHeight - 50.0f;
+            
+            // Background (Black)
+            DrawRectangle(healthBarX - 3, healthBarY - 3, healthBarWidth + 6, healthBarHeight + 6, BLACK);
+            
+            // Health percentage
+            float healthPercent = player.health / player.maxHealth;
+            Color healthBarColor = (healthPercent > 0.5f) ? GREEN : (healthPercent > 0.25f) ? YELLOW : RED;
+            
+            // Health fill
+            DrawRectangle(healthBarX, healthBarY, healthBarWidth * healthPercent, healthBarHeight, healthBarColor);
+            
+            // Health text (centered on bar)
+            DrawText(TextFormat("HP: %.0f / %.0f", player.health, player.maxHealth), 
+                    healthBarX + 50, healthBarY + 2, 16, WHITE);
         }
         else if (gameState == PAUSED) {
             // Draw game in background
