@@ -150,7 +150,10 @@ bool ShouldReturnToMenu(void) {
 }
 
 bool ShouldOpenPause(void) {
-    if (IsKeyPressed(KEY_ESCAPE)) return true;
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        TraceLog(LOG_DEBUG, "Pause menu triggered!");
+        return true;
+    }
     return false;
 }
 

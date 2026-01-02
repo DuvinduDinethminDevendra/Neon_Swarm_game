@@ -35,6 +35,8 @@ typedef struct {
 
 extern Sound gunShotSound;
 extern Sound gunReloadSound;
+extern Sound playerDamageSound;
+extern Sound enemyDamageSound;
 
 void InitBulletPool(Bullet bullets[], int maxBullets);
 void InitParticlePool(Particle particles[], int maxParticles);

@@ -7,6 +7,7 @@
 
 extern Shader slimeShader;
 extern int squashLoc;
+extern Sound enemyDamageSound;
 
 EnemyPool InitEnemyPool(void) {
     EnemyPool pool = {0};
@@ -64,45 +65,50 @@ void ApplyKnockback(Enemy* enemy, Vector2 direction) {
 
 void UpdateEnemyMovement(Enemy* enemy, Vector2 playerPos, int screenWidth, int screenHeight) {
     if (enemy->type == ENEMY_SLIME) {
+        // --- 1. CALCULATE HOP PHASE ---
+        // We use a sine wave to create a pulsing movement.
+        // Higher multiplier (e.g., 6.0f) makes the slime hop faster.
+        float hopCycle = sinf(enemy->animationCounter * 6.0f); 
+
         // Calculate direction toward player
         Vector2 dirToPlayer = Vector2Subtract(playerPos, enemy->position);
         float distToPlayer = Vector2Length(dirToPlayer);
         
-        // Chase player if within range
         if (distToPlayer > 5.0f) {
             Vector2 normalizedDir = Vector2Normalize(dirToPlayer);
-            enemy->velocity = Vector2Scale(normalizedDir, enemy->speed);
+            
+            // --- 2. MOVE ONLY DURING JUMP PHASE ---
+            // If hopCycle is positive, the slime is in the "air" moving forward.
+            if (hopCycle > 0.0f) {
+                float jumpSpeed = enemy->speed * 1.8f; // Boost speed during the jump
+                enemy->velocity = Vector2Scale(normalizedDir, jumpSpeed);
+            } else {
+                // If hopCycle is negative, the slime has "landed."
+                // Apply heavy friction to simulate sticking to the ground.
+                enemy->velocity = Vector2Scale(enemy->velocity, 0.82f); 
+            }
             
             // Flip based on movement direction
-            if (normalizedDir.x < 0) {
-                enemy->scale = -1.0f;
-            } else if (normalizedDir.x > 0) {
-                enemy->scale = 1.0f;
-            }
+            if (normalizedDir.x < 0) enemy->scale = -1.0f;
+            else if (normalizedDir.x > 0) enemy->scale = 1.0f;
         } else {
-            enemy->velocity = (Vector2){0, 0};
+            enemy->velocity = Vector2Scale(enemy->velocity, 0.8f);
         }
         
-        // Apply knockback velocity and decay it
-        enemy->position = Vector2Add(enemy->position, enemy->knockbackVelocity);
+        // --- 3. APPLY FORCES WITH DELTA TIME ---
+        // Decay knockback velocity
         enemy->knockbackVelocity = Vector2Scale(enemy->knockbackVelocity, KNOCKBACK_DECAY);
         
-        // Apply normal movement
-        enemy->position = Vector2Add(enemy->position, enemy->velocity);
+        // Combine forces and apply Delta Time for frame-rate independence.
+        // We multiply by 60.0f to keep the scale consistent with your previous 60FPS balancing.
+        Vector2 totalVelocity = Vector2Add(enemy->velocity, enemy->knockbackVelocity);
+        enemy->position = Vector2Add(enemy->position, Vector2Scale(totalVelocity, GetFrameTime() * 60.0f));
         
-        // Keep in bounds
-        if (enemy->position.x < enemy->radius) {
-            enemy->position.x = enemy->radius;
-        }
-        if (enemy->position.x > screenWidth - enemy->radius) {
-            enemy->position.x = screenWidth - enemy->radius;
-        }
-        if (enemy->position.y < enemy->radius) {
-            enemy->position.y = enemy->radius;
-        }
-        if (enemy->position.y > screenHeight - enemy->radius) {
-            enemy->position.y = screenHeight - enemy->radius;
-        }
+        // --- 4. BOUNDS CHECK ---
+        if (enemy->position.x < enemy->radius) enemy->position.x = enemy->radius;
+        if (enemy->position.x > screenWidth - enemy->radius) enemy->position.x = screenWidth - enemy->radius;
+        if (enemy->position.y < enemy->radius) enemy->position.y = enemy->radius;
+        if (enemy->position.y > screenHeight - enemy->radius) enemy->position.y = screenHeight - enemy->radius;
     }
 }
 
@@ -113,6 +119,12 @@ void TakeDamage(Enemy* enemy, float damage, Vector2 knockbackDirection) {
     
     // Visual feedback - change color briefly
     enemy->color = RED;
+    
+    // --- PLAY ENEMY DAMAGE SOUND ---
+    if (enemyDamageSound.frameCount > 0 && IsSoundValid(enemyDamageSound)) {
+        PlaySound(enemyDamageSound);
+        TraceLog(LOG_DEBUG, "Enemy damage sound played!");
+    }
     
     // Apply knockback
     ApplyKnockback(enemy, knockbackDirection);
@@ -125,87 +137,63 @@ void TakeDamage(Enemy* enemy, float damage, Vector2 knockbackDirection) {
 }
 
 void UpdateEnemies(EnemyPool* pool, Vector2 playerPos, int screenWidth, int screenHeight) {
+    // PASS 1: Update State, Animation, and Base Movement
     for (int i = 0; i < pool->count; i++) {
-        if (!pool->enemies[i].active) continue;
+        if (!pool->enemies[i].active) continue; //
         
         Enemy* enemy = &pool->enemies[i];
         
-        // Update animation
+        // 1. Update timers and animation
         enemy->animationCounter += GetFrameTime();
-        
-        // Update damage cooldown
         if (enemy->lastDamageTime > 0.0f) {
             enemy->lastDamageTime -= GetFrameTime();
         }
         
-        // Reset color to normal (away from RED damage state)
-        if (enemy->color.r > 0) {
-            enemy->color.r -= 5;
-            if (enemy->color.r < 0) enemy->color.r = 0;
+        // 2. Fix Color Recovery: Move from RED (255,0,0) back to WHITE (255,255,255)
+        // Instead of subtracting from Red, we add back to Green and Blue
+        if (enemy->color.g < 255) {
+            int recoveryRate = 10; 
+            enemy->color.g = (enemy->color.g + recoveryRate > 255) ? 255 : enemy->color.g + recoveryRate;
+            enemy->color.b = (enemy->color.b + recoveryRate > 255) ? 255 : enemy->color.b + recoveryRate;
         }
         
-        // Update movement with player position
+        // 3. Apply base movement
         UpdateEnemyMovement(enemy, playerPos, screenWidth, screenHeight);
     }
     
-    // --- ENEMY SEPARATION LOGIC (AFTER ALL MOVEMENT) ---
-    // This ensures no two enemies ever overlap
+    // PASS 2: Separation Resolution and Final Bounds Check
+    // We do this in a separate pass so separation doesn't get "overwritten" by movement
     for (int i = 0; i < pool->count; i++) {
         if (!pool->enemies[i].active) continue;
         
         Enemy* enemy = &pool->enemies[i];
-        
-        // Check against all other enemies
+
+        // Separation Logic (O(N^2))
         for (int j = i + 1; j < pool->count; j++) {
             if (!pool->enemies[j].active) continue;
             
             Enemy* neighbor = &pool->enemies[j];
-            
-            // Calculate distance between centers
             float distance = Vector2Distance(enemy->position, neighbor->position);
-            float minDistance = enemy->radius + neighbor->radius;
+            float minDistance = enemy->radius + neighbor->radius + 2.0f; // Added small buffer
             
-            // If overlapping, push them apart
             if (distance < minDistance && distance > 0.0f) {
-                // Calculate separation vector
-                Vector2 pushDirection = Vector2Subtract(enemy->position, neighbor->position);
-                pushDirection = Vector2Normalize(pushDirection);
-                
-                // Calculate how much overlap
+                Vector2 pushDir = Vector2Normalize(Vector2Subtract(enemy->position, neighbor->position));
                 float overlap = minDistance - distance;
                 
-                // Push both enemies apart equally
-                float pushForce = (overlap / 2.0f) + 0.5f;  // Extra 0.5f to ensure separation
+                // Use a scalar for smoother separation (0.5f means they share the push)
+                float pushForce = overlap * 0.5f;
                 
-                enemy->position = Vector2Add(enemy->position, 
-                                           Vector2Scale(pushDirection, pushForce));
-                
-                // Push neighbor in opposite direction
-                Vector2 oppositeDir = Vector2Scale(pushDirection, -1.0f);
-                neighbor->position = Vector2Add(neighbor->position,
-                                              Vector2Scale(oppositeDir, pushForce));
+                enemy->position = Vector2Add(enemy->position, Vector2Scale(pushDir, pushForce));
+                neighbor->position = Vector2Subtract(neighbor->position, Vector2Scale(pushDir, pushForce));
             }
         }
-    }
-    
-    // --- KEEP ALL ENEMIES IN BOUNDS AFTER SEPARATION ---
-    for (int i = 0; i < pool->count; i++) {
-        if (!pool->enemies[i].active) continue;
-        
-        Enemy* enemy = &pool->enemies[i];
-        
-        if (enemy->position.x < enemy->radius) {
-            enemy->position.x = enemy->radius;
-        }
-        if (enemy->position.x > screenWidth - enemy->radius) {
-            enemy->position.x = screenWidth - enemy->radius;
-        }
-        if (enemy->position.y < enemy->radius) {
-            enemy->position.y = enemy->radius;
-        }
-        if (enemy->position.y > screenHeight - enemy->radius) {
-            enemy->position.y = screenHeight - enemy->radius;
-        }
+
+        // Final Constraint: Keep in screen bounds
+        // This must happen AFTER separation to ensure enemies aren't pushed off-screen
+        if (enemy->position.x < enemy->radius) enemy->position.x = enemy->radius;
+        if (enemy->position.x > screenWidth - enemy->radius) enemy->position.x = screenWidth - enemy->radius;
+        if (enemy->position.y < enemy->radius) enemy->position.y = enemy->radius;
+        if (enemy->position.y > screenHeight - enemy->radius) enemy->position.y = screenHeight - enemy->radius;
     }
 }
 

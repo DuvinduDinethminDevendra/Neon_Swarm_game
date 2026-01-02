@@ -4,6 +4,8 @@
 
 Sound gunShotSound = {0};
 Sound gunReloadSound = {0};
+Sound playerDamageSound = {0};
+Sound enemyDamageSound = {0};
 
 void InitSounds(void) {
     gunShotSound = LoadSound("assets/sounds/mixkit-game-gun-shot-1662.mp3");
@@ -12,7 +14,7 @@ void InitSounds(void) {
         TraceLog(LOG_ERROR, "Make sure file exists at: assets/sounds/mixkit-game-gun-shot-1662.mp3");
     } else {
         TraceLog(LOG_INFO, "Gun shot sound loaded successfully! Frames: %d", gunShotSound.frameCount);
-        SetSoundVolume(gunShotSound, 0.7f);  // Set volume to 70%
+        SetSoundVolume(gunShotSound, 0.3f);  // Lowered from 0.7f to 0.3f
     }
     
     gunReloadSound = LoadSound("assets/sounds/gunreload.mp3");
@@ -21,6 +23,22 @@ void InitSounds(void) {
     } else {
         TraceLog(LOG_INFO, "Reload sound loaded successfully!");
         SetSoundVolume(gunReloadSound, 0.7f);  // Set volume to 70%
+    }
+    
+    playerDamageSound = LoadSound("assets/sounds/male_hurt7-48124.mp3");
+    if (playerDamageSound.frameCount == 0) {
+        TraceLog(LOG_ERROR, "FAILED to load player damage sound!");
+    } else {
+        TraceLog(LOG_INFO, "Player damage sound loaded successfully!");
+        SetSoundVolume(playerDamageSound, 0.7f);  // Set volume to 70%
+    }
+    
+    enemyDamageSound = LoadSound("assets/sounds/damage-blowhole-402072.mp3");
+    if (enemyDamageSound.frameCount == 0) {
+        TraceLog(LOG_ERROR, "FAILED to load enemy damage sound!");
+    } else {
+        TraceLog(LOG_INFO, "Enemy damage sound loaded successfully!");
+        SetSoundVolume(enemyDamageSound, 0.7f);  // Set volume to 70%
     }
 }
 
@@ -64,11 +82,8 @@ void ShootBullet(Bullet bullets[], int maxBullets, Vector2 position, Vector2 dir
             
             // --- PLAY GUN SHOT SOUND WITH MULTI-CHANNEL LAYERING ---
             if (gunShotSound.frameCount > 0 && IsSoundValid(gunShotSound)) {
-                // Add slight volume variation (0.65 - 0.75) for richer sound
-                float volumeVariation = 0.65f + ((float)(rand() % 100) / 1000.0f);
-                
-                // Add slight pitch variation by adjusting playback (optional, requires audio processing)
-                // For now, Raylib handles automatic channel mixing
+                // Add slight volume variation (0.25 - 0.35) for richer sound
+                float volumeVariation = 0.25f + ((float)(rand() % 100) / 1000.0f);
                 
                 SetSoundVolume(gunShotSound, volumeVariation);
                 PlaySound(gunShotSound);
