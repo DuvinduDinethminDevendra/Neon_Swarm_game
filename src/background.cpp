@@ -8,43 +8,67 @@
 Background InitBackground(int screenWidth, int screenHeight) {
     Background bg = {0};
     bg.position = (Vector2){0, 0};
-    bg.scrollSpeed = 0.3f; //
+    bg.scrollSpeed = 0.3f;
     bg.screenWidth = screenWidth;
     bg.screenHeight = screenHeight;
 
-    LoadTileset(&bg, "assets/txtures/mid_evil/PNG/Default size/Tile"); //
+    // Initialize tile categories from different medieval asset folders
+    // Each category uses the medieval prefix and occupies a specific index range
+    LoadCategory(&bg, "assets/txtures/mid_evil/PNG/Default size/Tile", "medievalTile", TILE_FLOOR_START, 60);
+    LoadCategory(&bg, "assets/txtures/mid_evil/PNG/Default size/Environment", "medievalEnvironment", TILE_STRUCTURE_START, 60);
+    LoadCategory(&bg, "assets/txtures/mid_evil/PNG/Default size/Structure", "medievalStructure", TILE_DECO_START, 60);
+    LoadCategory(&bg, "assets/txtures/mid_evil/PNG/Default size/Unit", "medievalUnit", TILE_SPECIAL_START, 60);
+    
+    TraceLog(LOG_INFO, "All medieval tile categories loaded! Tiles: 0-59, Environment: 60-119, Structure: 120-179, Unit: 180-239");
 
-    // Use a blank floor (Tile 14) as the default design base
-    if (!FileExists("assets/maps/map.dat")) {
-        for (int y = 0; y < MAP_HEIGHT; y++) {
-            for (int x = 0; x < MAP_WIDTH; x++) {
-                bg.map[y][x] = 14;  // medievalTile_14.png (Dirt/Floor)
-                bg.collisionMap[y][x] = false;
-            }
+    // Initialize base map with dirt floor (Tile 14) and no decorations
+    for (int y = 0; y < MAP_HEIGHT; y++) {
+        for (int x = 0; x < MAP_WIDTH; x++) {
+            bg.map[y][x] = 14;  // medievalTile_14.png (Dirt/Floor)
+            bg.decorationMap[y][x] = 0;  // No decoration initially
+            bg.collisionMap[y][x] = false;  // No collision by default
         }
-        TraceLog(LOG_INFO, "Empty design canvas created!");
-    } else {
-        LoadMap(&bg, "assets/maps/map.dat"); //
     }
+    TraceLog(LOG_INFO, "Empty design canvas created with base map at Tile 14 and empty decoration layer!");
+
+    // Load saved map if it exists
+    if (FileExists("assets/maps/map.dat")) {
+        LoadMap(&bg, "assets/maps/map.dat");
+    }
+    
     return bg;
 }
 
-void LoadTileset(Background* background, const char* tileFolder) {
-    for (int i = 0; i < 60; i++) {
+void LoadCategory(Background* background, const char* tileFolder, const char* filePrefix, int startIndex, int maxTiles) {
+    int successCount = 0;
+    int fallbackCount = 0;
+    
+    for (int i = 0; i < maxTiles; i++) {
+        int tileIndex = startIndex + i;
+        if (tileIndex >= MAX_TILES) {
+            TraceLog(LOG_WARNING, "Tile index %d exceeds MAX_TILES (%d). Stopping category load.", tileIndex, MAX_TILES);
+            break;
+        }
+
+        // Build filepath using the provided prefix and zero-padded index
         char filepath[512];
-        snprintf(filepath, sizeof(filepath), "%s/medievalTile_%02d.png", tileFolder, i);
-        background->tileSet[i] = LoadTexture(filepath);
+        snprintf(filepath, sizeof(filepath), "%s/%s_%02d.png", tileFolder, filePrefix, i);
+        background->tileSet[tileIndex] = LoadTexture(filepath);
         
-        if (background->tileSet[i].id == 0) {
-            TraceLog(LOG_WARNING, "Failed to load tile %d from %s", i, filepath);
-            // Create a fallback colored tile
+        if (background->tileSet[tileIndex].id == 0) {
+            // Fallback: Create a colored placeholder tile
             unsigned char colorValue = (unsigned char)(50 + i * 4);
             Image fallback = GenImageColor(TILE_SIZE, TILE_SIZE, (Color){colorValue, 100, 50, 255});
-            background->tileSet[i] = LoadTextureFromImage(fallback);
+            background->tileSet[tileIndex] = LoadTextureFromImage(fallback);
             UnloadImage(fallback);
+            fallbackCount++;
+        } else {
+            successCount++;
         }
     }
-    TraceLog(LOG_INFO, "Tileset loading complete! Loaded 60 medieval tiles.");
+    
+    TraceLog(LOG_INFO, "Category '%s' loaded: Folder: %s | Indices %d-%d | Success: %d | Fallback: %d", 
+             filePrefix, tileFolder, startIndex, startIndex + maxTiles - 1, successCount, fallbackCount);
 }
 
 void GenerateRandomMap(Background* background) {
@@ -59,10 +83,27 @@ void GenerateRandomMap(Background* background) {
 
 void SetTile(Background* background, int x, int y, int tileIndex) {
     if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
-        if (tileIndex >= 0 && tileIndex < 60) {
+        if (tileIndex >= 0 && tileIndex < MAX_TILES) {
             background->map[y][x] = tileIndex;
         }
     }
+}
+
+void SetDecoration(Background* background, int x, int y, int tileIndex) {
+    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+        if (tileIndex >= 0 && tileIndex < MAX_TILES) {
+            background->decorationMap[y][x] = tileIndex;
+        } else {
+            background->decorationMap[y][x] = 0;  // Clear decoration with negative index
+        }
+    }
+}
+
+int GetDecoration(Background* background, int x, int y) {
+    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+        return background->decorationMap[y][x];
+    }
+    return 0;
 }
 
 void SetCollision(Background* background, int x, int y, bool isBlocked) {
@@ -85,27 +126,50 @@ void UpdateBackground(Background* background, Vector2 cameraTarget) {
 
 void DrawBackground(Background* background) {
     // 1. Calculate how many tiles we need to cover the screen plus a safety buffer
+    // Using 64 as TILE_SIZE now ensures correct count
     int tilesNeededX = (background->screenWidth / TILE_SIZE) + 2; 
     int tilesNeededY = (background->screenHeight / TILE_SIZE) + 2;
     
-    // 2. Determine the first tile index to draw (floor the value to prevent clipping)
+    // 2. Determine the first tile index to draw using floor to prevent jumping/clipping
     int startTileX = (int)floor(background->position.x / TILE_SIZE);
     int startTileY = (int)floor(background->position.y / TILE_SIZE);
     
-    // 3. Draw visible tiles with floating-point precision for positions
+    // 3. Draw visible tiles - BASE LAYER
     for (int y = startTileY; y < startTileY + tilesNeededY; y++) {
         for (int x = startTileX; x < startTileX + tilesNeededX; x++) {
             // Safety bounds check for the 50x50 map array
             if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
                 int tileIndex = background->map[y][x];
                 
-                if (tileIndex >= 0 && tileIndex < 60 && background->tileSet[tileIndex].id != 0) {
-                    // Calculate precise screen position by subtracting camera offset
+                if (tileIndex >= 0 && tileIndex < MAX_TILES && background->tileSet[tileIndex].id != 0) {
+                    // 4. PRECISE FLOATING POINT POSITION
+                    // Subtracting the background position from the world grid position
                     Vector2 screenPos = {
                         (float)(x * TILE_SIZE) - background->position.x,
                         (float)(y * TILE_SIZE) - background->position.y
                     };
+                    
+                    // Drawing at WHITE tint ensures your medieval colors show correctly
                     DrawTextureV(background->tileSet[tileIndex], screenPos, WHITE);
+                }
+            }
+        }
+    }
+    
+    // 4. Draw DECORATION LAYER on top
+    for (int y = startTileY; y < startTileY + tilesNeededY; y++) {
+        for (int x = startTileX; x < startTileX + tilesNeededX; x++) {
+            if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+                int decoIndex = background->decorationMap[y][x];
+                
+                // Only draw if there's a decoration (non-zero)
+                if (decoIndex > 0 && decoIndex < MAX_TILES && background->tileSet[decoIndex].id != 0) {
+                    Vector2 screenPos = {
+                        (float)(x * TILE_SIZE) - background->position.x,
+                        (float)(y * TILE_SIZE) - background->position.y
+                    };
+                    
+                    DrawTextureV(background->tileSet[decoIndex], screenPos, WHITE);
                 }
             }
         }
@@ -116,11 +180,12 @@ Vector2 ScreenToWorldCoords(Vector2 screenPos, Vector2 bgPos) {
     return Vector2Add(screenPos, bgPos);
 }
 
-void GetTileCoords(Vector2 worldPos, int* tileX, int* tileY) {
-    *tileX = (int)(worldPos.x / TILE_SIZE);
-    *tileY = (int)(worldPos.y / TILE_SIZE);
-}
 
+void GetTileCoords(Vector2 worldPos, int* tileX, int* tileY) {
+    // Precise conversion from world pixels to grid indices
+    *tileX = (int)floor(worldPos.x / TILE_SIZE);
+    *tileY = (int)floor(worldPos.y / TILE_SIZE);
+}
 bool IsTileWalkable(Background* background, Vector2 worldPos) {
     int tileX, tileY;
     GetTileCoords(worldPos, &tileX, &tileY);
@@ -135,19 +200,21 @@ void SaveMap(Background* background, const char* filename) {
         system(cmdBuffer);
     }
     
-    // Write the map data AND collision data to file
-    unsigned char mapData[MAP_HEIGHT * MAP_WIDTH * 2];  // 2 bytes per tile (tile index + collision)
+    // Write map data: base tile + decoration tile + collision for each position
+    unsigned char mapData[MAP_HEIGHT * MAP_WIDTH * 4];  // 4 bytes per tile (base + deco + collision + padding)
     int dataIndex = 0;
     
     for (int y = 0; y < MAP_HEIGHT; y++) {
         for (int x = 0; x < MAP_WIDTH; x++) {
             mapData[dataIndex++] = (unsigned char)background->map[y][x];
+            mapData[dataIndex++] = (unsigned char)background->decorationMap[y][x];
             mapData[dataIndex++] = (unsigned char)(background->collisionMap[y][x] ? 1 : 0);
+            mapData[dataIndex++] = 0;  // Padding for alignment
         }
     }
     
     SaveFileData(filename, mapData, dataIndex);
-    TraceLog(LOG_INFO, "Map saved to %s (including collision data)", filename);
+    TraceLog(LOG_INFO, "Map saved to %s (base layer + decoration layer + collision data)", filename);
 }
 
 void LoadMap(Background* background, const char* filename) {
@@ -160,21 +227,35 @@ void LoadMap(Background* background, const char* filename) {
     int bytesRead = 0;
     unsigned char* mapData = LoadFileData(filename, &bytesRead);
     
-    // Expected size: MAP_HEIGHT * MAP_WIDTH * 2 (tile index + collision)
-    int expectedSize = MAP_HEIGHT * MAP_WIDTH * 2;
+    // Try new format first (4 bytes per tile: base + deco + collision + padding)
+    int expectedSizeNew = MAP_HEIGHT * MAP_WIDTH * 4;
+    int expectedSizeOld = MAP_HEIGHT * MAP_WIDTH * 2;  // Legacy format
     
-    if (bytesRead == expectedSize) {
+    if (bytesRead == expectedSizeNew) {
+        int dataIndex = 0;
+        for (int y = 0; y < MAP_HEIGHT; y++) {
+            for (int x = 0; x < MAP_WIDTH; x++) {
+                background->map[y][x] = (int)mapData[dataIndex++];
+                background->decorationMap[y][x] = (int)mapData[dataIndex++];
+                background->collisionMap[y][x] = (mapData[dataIndex++] != 0);
+                dataIndex++;  // Skip padding
+            }
+        }
+        TraceLog(LOG_INFO, "Map loaded from %s (base + decoration + collision layers)", filename);
+    } else if (bytesRead == expectedSizeOld) {
+        // Backward compatibility: load legacy format (base + collision only)
         int dataIndex = 0;
         for (int y = 0; y < MAP_HEIGHT; y++) {
             for (int x = 0; x < MAP_WIDTH; x++) {
                 background->map[y][x] = (int)mapData[dataIndex++];
                 background->collisionMap[y][x] = (mapData[dataIndex++] != 0);
+                background->decorationMap[y][x] = 0;  // No decorations in legacy maps
             }
         }
-        TraceLog(LOG_INFO, "Map loaded from %s (with collision data)", filename);
+        TraceLog(LOG_INFO, "Legacy map loaded from %s (base + collision only)", filename);
     } else {
-        TraceLog(LOG_WARNING, "Map file corrupted or invalid size. Expected %d bytes, got %d. Generating random map.", 
-                expectedSize, bytesRead);
+        TraceLog(LOG_WARNING, "Map file corrupted or invalid size. Expected %d or %d bytes, got %d. Generating random map.", 
+                expectedSizeOld, expectedSizeNew, bytesRead);
         GenerateRandomMap(background);
     }
     
@@ -182,10 +263,10 @@ void LoadMap(Background* background, const char* filename) {
 }
 
 void UnloadBackground(Background* background) {
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < MAX_TILES; i++) {
         if (background->tileSet[i].id != 0) {
             UnloadTexture(background->tileSet[i]);
         }
     }
-    TraceLog(LOG_INFO, "Background tileset unloaded!");
+    TraceLog(LOG_INFO, "Background tilesets unloaded! (%d tiles freed)", MAX_TILES);
 }

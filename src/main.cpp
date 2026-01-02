@@ -52,6 +52,7 @@ int main(void) {
     int currentSelectedTile = 0;
     bool mapEditorMode = false;
     bool collisionEditorMode = false;  // Toggle between tile and collision editing
+    bool decorationMode = false;       // Toggle between base layer and decoration layer
 
     // Initialize enemy pool
     EnemyPool enemyPool = InitEnemyPool();
@@ -222,25 +223,53 @@ int main(void) {
             if (IsKeyPressed(KEY_M)) {
                 mapEditorMode = !mapEditorMode;
                 collisionEditorMode = false;  // Reset collision mode when toggling editor
+                decorationMode = false;       // Reset decoration mode when toggling editor
                 TraceLog(LOG_INFO, "Map editor mode toggled: %s", mapEditorMode ? "ON" : "OFF");
             }
             
             if (mapEditorMode) {
-                // Toggle between tile and collision editing with C key
+                // Toggle between tile, collision, and decoration editing
                 if (IsKeyPressed(KEY_C)) {
                     collisionEditorMode = !collisionEditorMode;
+                    decorationMode = false;  // Switch out of decoration mode
                     TraceLog(LOG_INFO, "Collision editing mode: %s", collisionEditorMode ? "ON" : "OFF");
                 }
                 
-                // Cycle through tiles with mouse wheel (only in tile mode)
+                // Toggle decoration layer editing
+                if (IsKeyPressed(KEY_D)) {
+                    if (!collisionEditorMode) {
+                        decorationMode = !decorationMode;
+                        TraceLog(LOG_INFO, "Decoration layer mode: %s", decorationMode ? "ON" : "OFF");
+                    }
+                }
+                
+                // Cycle through tiles with mouse wheel (only in tile/deco mode)
                 if (!collisionEditorMode) {
                     float wheelMove = GetMouseWheelMove();
                     if (wheelMove != 0.0f) {
                         currentSelectedTile += (int)wheelMove;
-                        if (currentSelectedTile < 0) currentSelectedTile = 59;
-                        if (currentSelectedTile >= 60) currentSelectedTile = 0;
+                        if (currentSelectedTile < 0) currentSelectedTile = MAX_TILES - 1;
+                        if (currentSelectedTile >= MAX_TILES) currentSelectedTile = 0;
                         TraceLog(LOG_DEBUG, "Selected tile: %d", currentSelectedTile);
                     }
+                }
+                
+                // Category jumping with number keys (0-4 for quick category access)
+                if (IsKeyPressed(KEY_ONE)) currentSelectedTile = TILE_FLOOR_START;      // Jump to floor tiles
+                if (IsKeyPressed(KEY_TWO)) currentSelectedTile = TILE_STRUCTURE_START;  // Jump to structure tiles
+                if (IsKeyPressed(KEY_THREE)) currentSelectedTile = TILE_DECO_START;     // Jump to decoration tiles
+                if (IsKeyPressed(KEY_FOUR)) currentSelectedTile = TILE_SPECIAL_START;   // Jump to special tiles
+                
+                // Page Up/Down for larger tile jumps (±10 tiles)
+                if (IsKeyPressed(KEY_PAGE_UP)) {
+                    currentSelectedTile -= 10;
+                    if (currentSelectedTile < 0) currentSelectedTile = 0;
+                    TraceLog(LOG_DEBUG, "Category jump: tile %d", currentSelectedTile);
+                }
+                if (IsKeyPressed(KEY_PAGE_DOWN)) {
+                    currentSelectedTile += 10;
+                    if (currentSelectedTile >= MAX_TILES) currentSelectedTile = MAX_TILES - 1;
+                    TraceLog(LOG_DEBUG, "Category jump: tile %d", currentSelectedTile);
                 }
                 
                 // Get mouse position in world space
@@ -261,8 +290,30 @@ int main(void) {
                     if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON)) {
                         SetCollision(&background, tileX, tileY, false);
                     }
+                } else if (decorationMode) {
+                    // --- DECORATION LAYER EDITOR ---
+                    // Left click: Place decoration on current tile
+                    if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
+                        SetDecoration(&background, tileX, tileY, currentSelectedTile);
+                    }
+                    
+                    // Right click: Remove decoration
+                    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON)) {
+                        SetDecoration(&background, tileX, tileY, 0);
+                    }
+                    
+                    // Eyedropper with E key
+                    if (IsKeyPressed(KEY_E)) {
+                        if (tileX >= 0 && tileX < MAP_WIDTH && tileY >= 0 && tileY < MAP_HEIGHT) {
+                            int deco = GetDecoration(&background, tileX, tileY);
+                            if (deco > 0) {
+                                currentSelectedTile = deco;
+                                TraceLog(LOG_DEBUG, "Eyedropper: Selected decoration %d", currentSelectedTile);
+                            }
+                        }
+                    }
                 } else {
-                    // --- TILE EDITOR ---
+                    // --- BASE TILE EDITOR ---
                     // Paint tiles with left mouse button
                     if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
                         SetTile(&background, tileX, tileY, currentSelectedTile);
@@ -436,23 +487,7 @@ int main(void) {
             // Draw semi-transparent overlay to indicate editor mode
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.1f));
             
-            if (!collisionEditorMode) {
-                // --- TILE EDITOR UI ---
-                // Draw selected tile preview in top-left corner
-                if (background.tileSet[currentSelectedTile].id != 0) {
-                    DrawRectangle(10, 10, 100, 100, DARKGRAY);
-                    DrawRectangleLines(10, 10, 100, 100, LIME);
-                    Texture2D previewTex = background.tileSet[currentSelectedTile];
-                    DrawTextureEx(previewTex, (Vector2){15, 15}, 0, 2.5f, WHITE);
-                }
-                
-                // Draw tile index below preview
-                DrawText(TextFormat("Tile: %d", currentSelectedTile), 10, 120, 16, LIME);
-                
-                // Draw tile editor controls
-                DrawText("TILE EDITOR | Mouse Wheel - Select | LClick - Paint | RClick - Pick", 
-                        10, screenHeight - 60, 12, YELLOW);
-            } else {
+            if (collisionEditorMode) {
                 // --- COLLISION EDITOR UI ---
                 DrawText("COLLISION EDITOR", 10, 10, 20, RED);
                 DrawText("LClick - Block | RClick - Unblock", 10, 35, 16, YELLOW);
@@ -485,10 +520,62 @@ int main(void) {
                         }
                     }
                 }
+            } else if (decorationMode) {
+                // --- DECORATION LAYER EDITOR UI ---
+                // Draw selected tile preview in top-left corner
+                if (background.tileSet[currentSelectedTile].id != 0) {
+                    DrawRectangle(10, 10, 100, 100, DARKGRAY);
+                    DrawRectangleLines(10, 10, 100, 100, ORANGE);
+                    Texture2D previewTex = background.tileSet[currentSelectedTile];
+                    DrawTextureEx(previewTex, (Vector2){15, 15}, 0, 2.5f, WHITE);
+                }
+                
+                // Draw tile index and mode info
+                DrawText("DECORATION LAYER", 10, 120, 16, ORANGE);
+                DrawText(TextFormat("Tile: %d", currentSelectedTile), 10, 145, 16, LIME);
+                
+                // Draw decoration editor controls
+                DrawText("Mouse Wheel - Select | LClick - Place | RClick - Remove | E - Eyedropper", 
+                        10, screenHeight - 60, 12, YELLOW);
+            } else {
+                // --- BASE TILE EDITOR UI ---
+                // Draw selected tile preview in top-left corner
+                if (background.tileSet[currentSelectedTile].id != 0) {
+                    DrawRectangle(10, 10, 100, 100, DARKGRAY);
+                    DrawRectangleLines(10, 10, 100, 100, LIME);
+                    Texture2D previewTex = background.tileSet[currentSelectedTile];
+                    DrawTextureEx(previewTex, (Vector2){15, 15}, 0, 2.5f, WHITE);
+                }
+                
+                // Draw tile index below preview
+                DrawText(TextFormat("Tile: %d", currentSelectedTile), 10, 120, 16, LIME);
+                
+                // Draw tile editor controls
+                DrawText("Mouse Wheel - Select | LClick - Paint | RClick - Pick", 
+                        10, screenHeight - 60, 12, YELLOW);
             }
             
+            // Draw category info and controls with helpful labels
+            const char* categoryLabel = "Unknown";
+            Color categoryColor = WHITE;
+            if (currentSelectedTile >= TILE_FLOOR_START && currentSelectedTile <= TILE_FLOOR_END) {
+                categoryLabel = "Tiles (1)";
+                categoryColor = LIME;
+            } else if (currentSelectedTile >= TILE_STRUCTURE_START && currentSelectedTile <= TILE_STRUCTURE_END) {
+                categoryLabel = "Environment (2)";
+                categoryColor = GREEN;
+            } else if (currentSelectedTile >= TILE_DECO_START && currentSelectedTile <= TILE_DECO_END) {
+                categoryLabel = "Structure (3)";
+                categoryColor = ORANGE;
+            } else if (currentSelectedTile >= TILE_SPECIAL_START && currentSelectedTile <= TILE_SPECIAL_END) {
+                categoryLabel = "Unit (4)";
+                categoryColor = YELLOW;
+            }
+            DrawText(TextFormat("Category: %s", categoryLabel), 10, screenHeight - 85, 12, categoryColor);
+            DrawText("1-4: Jump Categories | PgUp/Down: Jump 10 Tiles", 10, screenHeight - 105, 12, SKYBLUE);
+            
             // Draw shared editor controls
-            DrawText("M - Toggle Editor | C - Toggle Mode | S - Save | L - Load", 
+            DrawText("M - Toggle Editor | C - Collision | D - Decoration | S - Save | L - Load", 
                     10, screenHeight - 30, 12, YELLOW);
         }
 
