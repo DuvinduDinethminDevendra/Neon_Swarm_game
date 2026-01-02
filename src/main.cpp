@@ -10,6 +10,36 @@
 // Game States
 typedef enum { MENU, PLAYING, PAUSED, SETTINGS, QUIT } GameState;
 
+// Tile Categories for UI
+typedef enum { 
+    CATEGORY_TILES = 0,        // Tiles (0-59)
+    CATEGORY_ENVIRONMENT = 1,  // Environment (60-119)
+    CATEGORY_STRUCTURE = 2,    // Structure (120-179)
+    CATEGORY_UNIT = 3          // Unit (180-239)
+} TileCategory;
+
+// Helper function to get category start index
+int GetCategoryStart(TileCategory cat) {
+    switch(cat) {
+        case CATEGORY_TILES:       return TILE_FLOOR_START;
+        case CATEGORY_ENVIRONMENT: return TILE_STRUCTURE_START;
+        case CATEGORY_STRUCTURE:   return TILE_DECO_START;
+        case CATEGORY_UNIT:        return TILE_SPECIAL_START;
+        default:                   return 0;
+    }
+}
+
+// Helper function to get category name
+const char* GetCategoryName(TileCategory cat) {
+    switch(cat) {
+        case CATEGORY_TILES:       return "Tiles";
+        case CATEGORY_ENVIRONMENT: return "Environment";
+        case CATEGORY_STRUCTURE:   return "Structure";
+        case CATEGORY_UNIT:        return "Units";
+        default:                   return "Unknown";
+    }
+}
+
 int main(void) {
     // 1. Initialization
     const int screenWidth = 800;
@@ -53,6 +83,12 @@ int main(void) {
     bool mapEditorMode = false;
     bool collisionEditorMode = false;  // Toggle between tile and collision editing
     bool decorationMode = false;       // Toggle between base layer and decoration layer
+    TileCategory currentCategory = CATEGORY_TILES;  // Track active category
+    
+    // Editor UI constants
+    const int TILE_PREVIEW_SIZE = 32;  // Size of tiles in the selection grid
+    const int PREVIEW_COLS = 5;        // 5 columns of tile previews
+    const int PREVIEW_ROWS = 3;        // 3 rows of tile previews
 
     // Initialize enemy pool
     EnemyPool enemyPool = InitEnemyPool();
@@ -239,7 +275,16 @@ int main(void) {
                 if (IsKeyPressed(KEY_D)) {
                     if (!collisionEditorMode) {
                         decorationMode = !decorationMode;
-                        TraceLog(LOG_INFO, "Decoration layer mode: %s", decorationMode ? "ON" : "OFF");
+                        // Auto-jump to relevant category when entering decoration mode
+                        if (decorationMode) {
+                            currentCategory = CATEGORY_STRUCTURE;
+                            currentSelectedTile = TILE_DECO_START;
+                            TraceLog(LOG_INFO, "Decoration mode ON - Jumped to Structure category (120)");
+                        } else {
+                            currentCategory = CATEGORY_TILES;
+                            currentSelectedTile = TILE_FLOOR_START;
+                            TraceLog(LOG_INFO, "Decoration mode OFF - Jumped to Tiles category (0)");
+                        }
                     }
                 }
                 
@@ -254,11 +299,27 @@ int main(void) {
                     }
                 }
                 
-                // Category jumping with number keys (0-4 for quick category access)
-                if (IsKeyPressed(KEY_ONE)) currentSelectedTile = TILE_FLOOR_START;      // Jump to floor tiles
-                if (IsKeyPressed(KEY_TWO)) currentSelectedTile = TILE_STRUCTURE_START;  // Jump to structure tiles
-                if (IsKeyPressed(KEY_THREE)) currentSelectedTile = TILE_DECO_START;     // Jump to decoration tiles
-                if (IsKeyPressed(KEY_FOUR)) currentSelectedTile = TILE_SPECIAL_START;   // Jump to special tiles
+                // Category jumping with number keys (1-4 for quick category access)
+                if (IsKeyPressed(KEY_ONE)) {
+                    currentCategory = CATEGORY_TILES;
+                    currentSelectedTile = TILE_FLOOR_START;
+                    TraceLog(LOG_INFO, "Jumped to category: Tiles (0)");
+                }
+                if (IsKeyPressed(KEY_TWO)) {
+                    currentCategory = CATEGORY_ENVIRONMENT;
+                    currentSelectedTile = TILE_STRUCTURE_START;
+                    TraceLog(LOG_INFO, "Jumped to category: Environment (60)");
+                }
+                if (IsKeyPressed(KEY_THREE)) {
+                    currentCategory = CATEGORY_STRUCTURE;
+                    currentSelectedTile = TILE_DECO_START;
+                    TraceLog(LOG_INFO, "Jumped to category: Structure (120)");
+                }
+                if (IsKeyPressed(KEY_FOUR)) {
+                    currentCategory = CATEGORY_UNIT;
+                    currentSelectedTile = TILE_SPECIAL_START;
+                    TraceLog(LOG_INFO, "Jumped to category: Unit (180)");
+                }
                 
                 // Page Up/Down for larger tile jumps (±10 tiles)
                 if (IsKeyPressed(KEY_PAGE_UP)) {
@@ -522,57 +583,95 @@ int main(void) {
                 }
             } else if (decorationMode) {
                 // --- DECORATION LAYER EDITOR UI ---
-                // Draw selected tile preview in top-left corner
-                if (background.tileSet[currentSelectedTile].id != 0) {
-                    DrawRectangle(10, 10, 100, 100, DARKGRAY);
-                    DrawRectangleLines(10, 10, 100, 100, ORANGE);
-                    Texture2D previewTex = background.tileSet[currentSelectedTile];
-                    DrawTextureEx(previewTex, (Vector2){15, 15}, 0, 2.5f, WHITE);
+                DrawText("DECORATION LAYER", 10, 10, 20, ORANGE);
+                DrawText(TextFormat("Selected: %d | Category: %s", currentSelectedTile, GetCategoryName(currentCategory)), 
+                        10, 35, 14, ORANGE);
+                
+                // Draw tile palette grid for current category
+                int categoryStart = GetCategoryStart(currentCategory);
+                int baseX = 10;
+                int baseY = 60;
+                int spacing = TILE_PREVIEW_SIZE + 4;
+                
+                for (int i = 0; i < PREVIEW_COLS * PREVIEW_ROWS; i++) {
+                    int tileIdx = categoryStart + i;
+                    if (tileIdx >= MAX_TILES) break;
+                    
+                    int col = i % PREVIEW_COLS;
+                    int row = i / PREVIEW_COLS;
+                    int x = baseX + col * spacing;
+                    int y = baseY + row * spacing;
+                    
+                    // Draw tile slot background
+                    DrawRectangle(x, y, TILE_PREVIEW_SIZE, TILE_PREVIEW_SIZE, DARKGRAY);
+                    
+                    // Draw tile texture if loaded
+                    if (background.tileSet[tileIdx].id != 0) {
+                        DrawTextureRec(background.tileSet[tileIdx], 
+                            (Rectangle){0, 0, (float)background.tileSet[tileIdx].width, (float)background.tileSet[tileIdx].height},
+                            (Vector2){(float)x, (float)y}, WHITE);
+                    }
+                    
+                    // Highlight current selection with gold border
+                    if (tileIdx == currentSelectedTile) {
+                        DrawRectangleLines(x - 2, y - 2, TILE_PREVIEW_SIZE + 4, TILE_PREVIEW_SIZE + 4, GOLD);
+                        DrawRectangleLines(x - 3, y - 3, TILE_PREVIEW_SIZE + 6, TILE_PREVIEW_SIZE + 6, GOLD);
+                    }
+                    
+                    // Draw tile index
+                    DrawText(TextFormat("%d", tileIdx), x + 3, y + TILE_PREVIEW_SIZE - 12, 8, WHITE);
                 }
                 
-                // Draw tile index and mode info
-                DrawText("DECORATION LAYER", 10, 120, 16, ORANGE);
-                DrawText(TextFormat("Tile: %d", currentSelectedTile), 10, 145, 16, LIME);
-                
-                // Draw decoration editor controls
                 DrawText("Mouse Wheel - Select | LClick - Place | RClick - Remove | E - Eyedropper", 
                         10, screenHeight - 60, 12, YELLOW);
             } else {
                 // --- BASE TILE EDITOR UI ---
-                // Draw selected tile preview in top-left corner
-                if (background.tileSet[currentSelectedTile].id != 0) {
-                    DrawRectangle(10, 10, 100, 100, DARKGRAY);
-                    DrawRectangleLines(10, 10, 100, 100, LIME);
-                    Texture2D previewTex = background.tileSet[currentSelectedTile];
-                    DrawTextureEx(previewTex, (Vector2){15, 15}, 0, 2.5f, WHITE);
+                DrawText("BASE LAYER EDITOR", 10, 10, 20, LIME);
+                DrawText(TextFormat("Selected: %d | Category: %s", currentSelectedTile, GetCategoryName(currentCategory)), 
+                        10, 35, 14, LIME);
+                
+                // Draw tile palette grid for current category
+                int categoryStart = GetCategoryStart(currentCategory);
+                int baseX = 10;
+                int baseY = 60;
+                int spacing = TILE_PREVIEW_SIZE + 4;
+                
+                for (int i = 0; i < PREVIEW_COLS * PREVIEW_ROWS; i++) {
+                    int tileIdx = categoryStart + i;
+                    if (tileIdx >= MAX_TILES) break;
+                    
+                    int col = i % PREVIEW_COLS;
+                    int row = i / PREVIEW_COLS;
+                    int x = baseX + col * spacing;
+                    int y = baseY + row * spacing;
+                    
+                    // Draw tile slot background
+                    DrawRectangle(x, y, TILE_PREVIEW_SIZE, TILE_PREVIEW_SIZE, DARKGRAY);
+                    
+                    // Draw tile texture if loaded
+                    if (background.tileSet[tileIdx].id != 0) {
+                        DrawTextureRec(background.tileSet[tileIdx], 
+                            (Rectangle){0, 0, (float)background.tileSet[tileIdx].width, (float)background.tileSet[tileIdx].height},
+                            (Vector2){(float)x, (float)y}, WHITE);
+                    }
+                    
+                    // Highlight current selection with gold border
+                    if (tileIdx == currentSelectedTile) {
+                        DrawRectangleLines(x - 2, y - 2, TILE_PREVIEW_SIZE + 4, TILE_PREVIEW_SIZE + 4, GOLD);
+                        DrawRectangleLines(x - 3, y - 3, TILE_PREVIEW_SIZE + 6, TILE_PREVIEW_SIZE + 6, GOLD);
+                    }
+                    
+                    // Draw tile index
+                    DrawText(TextFormat("%d", tileIdx), x + 3, y + TILE_PREVIEW_SIZE - 12, 8, WHITE);
                 }
                 
-                // Draw tile index below preview
-                DrawText(TextFormat("Tile: %d", currentSelectedTile), 10, 120, 16, LIME);
-                
-                // Draw tile editor controls
                 DrawText("Mouse Wheel - Select | LClick - Paint | RClick - Pick", 
                         10, screenHeight - 60, 12, YELLOW);
             }
             
-            // Draw category info and controls with helpful labels
-            const char* categoryLabel = "Unknown";
-            Color categoryColor = WHITE;
-            if (currentSelectedTile >= TILE_FLOOR_START && currentSelectedTile <= TILE_FLOOR_END) {
-                categoryLabel = "Tiles (1)";
-                categoryColor = LIME;
-            } else if (currentSelectedTile >= TILE_STRUCTURE_START && currentSelectedTile <= TILE_STRUCTURE_END) {
-                categoryLabel = "Environment (2)";
-                categoryColor = GREEN;
-            } else if (currentSelectedTile >= TILE_DECO_START && currentSelectedTile <= TILE_DECO_END) {
-                categoryLabel = "Structure (3)";
-                categoryColor = ORANGE;
-            } else if (currentSelectedTile >= TILE_SPECIAL_START && currentSelectedTile <= TILE_SPECIAL_END) {
-                categoryLabel = "Unit (4)";
-                categoryColor = YELLOW;
-            }
-            DrawText(TextFormat("Category: %s", categoryLabel), 10, screenHeight - 85, 12, categoryColor);
-            DrawText("1-4: Jump Categories | PgUp/Down: Jump 10 Tiles", 10, screenHeight - 105, 12, SKYBLUE);
+            // Draw category navigation info
+            DrawText("1-Tiles | 2-Environment | 3-Structure | 4-Units | PgUp/Down: Jump", 
+                    10, screenHeight - 85, 12, SKYBLUE);
             
             // Draw shared editor controls
             DrawText("M - Toggle Editor | C - Collision | D - Decoration | S - Save | L - Load", 
